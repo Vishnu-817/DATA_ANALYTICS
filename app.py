@@ -4,10 +4,10 @@ import re
 from datetime import date, datetime
 from pathlib import Path
 
-import mysql.connector
+import psycopg2
+import psycopg2.extras
 from dotenv import load_dotenv
 from flask import Flask, jsonify, render_template, request, send_from_directory
-from mysql.connector import Error as MySQLError
 
 load_dotenv()
 
@@ -16,19 +16,13 @@ logging.basicConfig(level=logging.INFO)
 
 
 def get_db_connection():
-    required_settings = ("MYSQL_HOST", "MYSQL_USER", "MYSQL_PASSWORD", "MYSQL_DATABASE")
-    missing_settings = [key for key in required_settings if not os.getenv(key)]
-    if missing_settings:
-        raise RuntimeError(
-            "Missing database configuration: " + ", ".join(missing_settings)
-        )
-
-    return mysql.connector.connect(
-        host=os.environ["MYSQL_HOST"],
-        port=int(os.getenv("MYSQL_PORT", "3306")),
-        user=os.environ["MYSQL_USER"],
-        password=os.environ["MYSQL_PASSWORD"],
-        database=os.environ["MYSQL_DATABASE"],
+    return psycopg2.connect(
+        host=os.environ["PGHOST"],
+        port=int(os.getenv("PGPORT", "5432")),
+        user=os.environ["PGUSER"],
+        password=os.environ["PGPASSWORD"],
+        dbname=os.environ["PGDATABASE"],
+        sslmode="require"
     )
 
 
@@ -53,20 +47,20 @@ def menu():
     cursor = None
     try:
         connection = get_db_connection()
-        cursor = connection.cursor(dictionary=True)
+        cursor = connection.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cursor.execute(
             "SELECT id, name, description, price, category, image_url "
             "FROM menu_items WHERE available = TRUE ORDER BY category, name"
         )
         items = cursor.fetchall()
         return jsonify(items)
-    except MySQLError:
-        app.logger.exception("Could not load menu from MySQL")
+    except psycopg2.Error:
+        app.logger.exception("Could not load menu from PostgreSQL")
         return jsonify({"error": "The menu is temporarily unavailable."}), 503
     finally:
         if cursor is not None:
             cursor.close()
-        if connection is not None and connection.is_connected():
+        if connection is not None:
             connection.close()
 
 
@@ -115,17 +109,17 @@ def create_reservation():
         )
         connection.commit()
         return jsonify({"message": "Your table request has been received."}), 201
-    except MySQLError:
-        if connection is not None and connection.is_connected():
+    except psycopg2.Error:
+        if connection is not None:
             connection.rollback()
-        app.logger.exception("Could not save reservation to MySQL")
+        app.logger.exception("Could not save reservation to PostgreSQL")
         return jsonify({"error": "We couldn't save your reservation. Please try again."}), 503
     finally:
         if cursor is not None:
             cursor.close()
-        if connection is not None and connection.is_connected():
+        if connection is not None:
             connection.close()
 
 
 if __name__ == "__main__":
-    app.run(debug=os.getenv("FLASK_DEBUG") == "1")
+    app.run(debug=os.getenv("FLASK_DEBUG") == "1")   
